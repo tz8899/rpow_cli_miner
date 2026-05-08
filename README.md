@@ -229,23 +229,3 @@ node rpow-cli.js logout
 ```bash
 node rpow-cli.js send --to friend@example.com --amount 1
 ```
-
-## 打包前检查
-
-打包前确认没有这些文件被放进压缩包：
-
-```text
-.rpow-cli-state.json
-*.log
-worker-logs/
-worker-states/
-node_modules/
-```
-
-推荐发布压缩包名：
-
-```text
-rpow2-gpu-cli-miner-release.zip
-```
-
-如果要给不会编译的人使用，可以额外单独提供对应系统的二进制，例如 `rpow-gpu-miner` 或 `rpow-gpu-miner.exe`。但源码包默认不带二进制，避免系统/CUDA 架构不匹配。
