@@ -19,4 +19,16 @@ or build manually from the MSYS2 MinGW x64 shell:
 gcc -O3 -march=native -pthread rpow-native-miner.c -o rpow-native-miner.exe
 
 Write-Host "Built .\rpow-native-miner.exe"
-Write-Host "Run: node rpow-cli.js mine --count 1 --engine native"
+
+$nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
+if ($nvcc) {
+  $cudaArch = $env:CUDA_ARCH
+  if (-not $cudaArch) { $cudaArch = "sm_120" }
+  & $nvcc.Source -O3 -std=c++17 "-arch=$cudaArch" rpow-gpu-miner.cu -o rpow-gpu-miner.exe
+  Write-Host "Built .\rpow-gpu-miner.exe with CUDA_ARCH=$cudaArch"
+} else {
+  Write-Host "CUDA nvcc not found; skipped GPU miner build"
+}
+
+Write-Host "Run CPU: node rpow-cli.js mine --count 1 --engine native"
+Write-Host "Run GPU: node rpow-cli.js mine --count 1 --engine gpu --workers 16"

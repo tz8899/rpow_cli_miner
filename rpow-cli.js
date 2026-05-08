@@ -23,7 +23,19 @@ const NATIVE_MINER_CANDIDATES = process.platform === "win32"
     path.join(__dirname, "rpow-native-miner"),
     path.join(__dirname, "rpow-native-miner.exe"),
   ];
+const GPU_MINER_CANDIDATES = process.platform === "win32"
+  ? [
+    path.join(__dirname, "rpow-gpu-miner.exe"),
+    path.join(__dirname, "rpow-gpu-miner"),
+  ]
+  : [
+    path.join(__dirname, "rpow-gpu-miner"),
+    path.join(__dirname, "rpow-gpu-miner.exe"),
+  ];
 const SAFE_HOSTS = new Set([
+  "api.rpow3.com",
+  "rpow3.com",
+  "www.rpow3.com",
   "api.rpow2.com",
   "rpow2.com",
   "www.rpow2.com",
@@ -384,6 +396,10 @@ function nativeMinerPath() {
   return NATIVE_MINER_CANDIDATES.find((file) => fs.existsSync(file)) || null;
 }
 
+function gpuMinerPath() {
+  return GPU_MINER_CANDIDATES.find((file) => fs.existsSync(file)) || null;
+}
+
 function mineSolutionSingleThread(challenge, state, stateFile, logEveryMs) {
   const prefix = hexToBytes(challenge.nonce_prefix);
   const difficulty = Number(challenge.difficulty_bits);
@@ -662,6 +678,116 @@ function mineSolutionNative(challenge, state, stateFile, logEveryMs, workerCount
   });
 }
 
+function mineSolutionGpu(challenge, state, stateFile, logEveryMs, workerCount, options = {}) {
+  const gpuMiner = gpuMinerPath();
+  if (!gpuMiner) {
+    throw new Error(`GPU miner not built; expected one of: ${GPU_MINER_CANDIDATES.join(", ")}`);
+  }
+  return new Promise((resolve, reject) => {
+    const difficulty = Number(challenge.difficulty_bits);
+    const expiresAt = challenge.expires_at ? Date.parse(challenge.expires_at) : null;
+    const cutoffAt = Number.isFinite(expiresAt) ? expiresAt - 5000 : 0;
+    const startNonce = BigInt(state.mining?.nonce || "0");
+    const started = Date.now();
+    let settled = false;
+    let stderr = "";
+
+    const minerArgs = [
+      "--prefix", challenge.nonce_prefix,
+      "--difficulty", String(difficulty),
+      "--workers", String(workerCount),
+      "--start", startNonce.toString(),
+      "--cutoff-ms", String(cutoffAt || 0),
+      "--progress-ms", String(logEveryMs),
+    ];
+    if (options.device !== undefined) minerArgs.push("--device", String(options.device));
+    if (options.localSize !== undefined) minerArgs.push("--local-size", String(options.localSize));
+    if (options.rounds !== undefined) minerArgs.push("--rounds", String(options.rounds));
+    if (options.blocks !== undefined) minerArgs.push("--blocks", String(options.blocks));
+
+    const child = spawn(gpuMiner, minerArgs, { windowsHide: true });
+
+    let buffer = "";
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      while (buffer.includes("\n")) {
+        const idx = buffer.indexOf("\n");
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          log("warn", "GPU miner emitted non-json line", { line });
+          continue;
+        }
+        if (message.type === "progress") {
+          const hashes = BigInt(message.hashes || "0");
+          state.mining = {
+            challenge_id: challenge.challenge_id,
+            nonce: message.nonce,
+            hashes: hashes.toString(),
+            difficulty_bits: difficulty,
+            workers: workerCount,
+            engine: "gpu",
+            device: message.device,
+          };
+          saveState(stateFile, state);
+          log("info", "mining", {
+            hashes: hashes.toString(),
+            nonce: message.nonce,
+            workers: workerCount,
+            engine: "gpu",
+            device: message.device,
+            local_size: message.local_size,
+            speed: message.speed,
+          });
+        }
+        if (message.type === "found") {
+          settled = true;
+          state.mining = {
+            ...state.mining,
+            nonce: message.solution_nonce,
+            hashes: message.hashes,
+            found_at: new Date().toISOString(),
+            workers: workerCount,
+            engine: "gpu",
+            device: message.device,
+          };
+          saveState(stateFile, state);
+          resolve({
+            solution_nonce: message.solution_nonce,
+            hashes: message.hashes,
+            digest: message.digest,
+            speed: message.speed,
+            elapsed_ms: Date.now() - started,
+            device: message.device,
+          });
+        }
+        if (message.type === "expired") {
+          settled = true;
+          const err = new Error("challenge expired before a solution was found");
+          err.code = "CHALLENGE_EXPIRED";
+          err.retryable = true;
+          reject(err);
+        }
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (settled) return;
+      if (code === 0) return;
+      reject(new Error(`GPU miner exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
+    });
+  });
+}
+
 async function promptLine(label) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(label, (answer) => {
@@ -676,7 +802,7 @@ async function main() {
   const command = args._[0] || "help";
   const discovered = discoverFromIndex(args.index || DEFAULT_INDEX);
   const client = new RpowClient({
-    apiOrigin: args.api || discovered.apiOrigin,
+    apiOrigin: args.api || DEFAULT_API_ORIGIN,
     siteOrigin: args.site || DEFAULT_SITE_ORIGIN,
     stateFile: args.state || DEFAULT_STATE,
     timeoutMs: args.timeout || 20000,
@@ -739,11 +865,11 @@ async function main() {
 
   if (command === "mine" || command === "run") {
     const target = Number(args.count || args.tokens || 1);
-    const workers = Number(args.workers || defaultWorkerCount());
-    const engine = args.engine || (nativeMinerPath() ? "native" : "node");
-    const logEveryMs = Number(args["log-every-ms"] || (engine === "native" ? 1000 : 5000));
+    const engine = args.engine || (gpuMinerPath() ? "gpu" : nativeMinerPath() ? "native" : "node");
+    const workers = Number(args.workers || (engine === "gpu" ? 16 : defaultWorkerCount()));
+    const logEveryMs = Number(args["log-every-ms"] || (engine === "node" ? 5000 : 1000));
     if (!Number.isInteger(workers) || workers < 1) throw new Error("--workers must be a positive integer");
-    if (!["native", "node"].includes(engine)) throw new Error("--engine must be native or node");
+    if (!["gpu", "native", "node"].includes(engine)) throw new Error("--engine must be gpu, native or node");
     let minted = 0;
     await client.api("GET", "/me");
     while (minted < target) {
@@ -765,9 +891,18 @@ async function main() {
       let solution;
       try {
         log("info", "miner config", { workers, engine });
-        solution = engine === "native"
-          ? await mineSolutionNative(challenge, client.state, client.stateFile, logEveryMs, workers)
-          : await mineSolutionParallel(challenge, client.state, client.stateFile, logEveryMs, workers);
+        if (engine === "gpu") {
+          solution = await mineSolutionGpu(challenge, client.state, client.stateFile, logEveryMs, workers, {
+            device: args.device,
+            localSize: args["local-size"],
+            rounds: args.rounds,
+            blocks: args.blocks,
+          });
+        } else if (engine === "native") {
+          solution = await mineSolutionNative(challenge, client.state, client.stateFile, logEveryMs, workers);
+        } else {
+          solution = await mineSolutionParallel(challenge, client.state, client.stateFile, logEveryMs, workers);
+        }
       } catch (err) {
         if (err.code === "CHALLENGE_EXPIRED") {
           log("warn", "challenge expired during mining; requesting a fresh one");
@@ -783,6 +918,7 @@ async function main() {
         hashes: solution.hashes,
         speed: solution.speed,
         elapsed_ms: solution.elapsed_ms,
+        device: solution.device,
       });
       try {
         const result = await client.api("POST", "/mint", {
@@ -816,8 +952,9 @@ async function main() {
   node rpow-cli.js login --email you@example.com
   node rpow-cli.js complete-login --link "https://..."
   node rpow-cli.js me
+  node rpow-cli.js mine --count 1 --engine gpu --workers 16
   node rpow-cli.js mine --count 1 --engine native
-  node rpow-cli.js run --count 3 --engine native
+  node rpow-cli.js run --count 3 --engine gpu
   node rpow-cli.js send --to user@example.com --amount 1
   node rpow-cli.js ledger
   node rpow-cli.js activity
@@ -829,7 +966,10 @@ Options:
   --retries 5
   --log-every-ms 5000
   --workers ${defaultWorkerCount()}
-  --engine native|node  (native C miner recommended)
+  --engine gpu|native|node  (CUDA GPU miner preferred when available)
+  --device 0              GPU device id for --engine gpu
+  --local-size 256        CUDA block size for --engine gpu
+  --rounds 128            Nonces per CUDA thread per batch
   --verbose`);
 }
 

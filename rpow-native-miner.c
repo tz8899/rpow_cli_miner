@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--cutoff-ms") && i + 1 < argc) cutoff_ms = parse_u64(argv[++i]);
     else if (!strcmp(argv[i], "--progress-ms") && i + 1 < argc) progress_ms = parse_u64(argv[++i]);
   }
-  if (!prefix_hex || parse_hex(prefix_hex, prefix, &prefix_len) || difficulty <= 0 || workers <= 0 || workers > 256) {
+  if (!prefix_hex || parse_hex(prefix_hex, prefix, &prefix_len) || difficulty <= 0 || workers <= 0 || workers > 2048) {
     fprintf(stderr, "usage: rpow-native-miner --prefix HEX --difficulty N --workers N [--start N] [--cutoff-ms N]\n");
     return 2;
   }

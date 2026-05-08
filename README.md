@@ -1,409 +1,251 @@
-# RPOW Native CLI Portable
+# RPOW2 GPU CLI Miner
 
-Portable command-line client for RPOW2 with a native C proof-of-work miner. It reproduces the site's browser API pipeline without opening the web UI: magic-link login, session cookies, challenge request, local C mining, minting, sending, activity and ledger queries.
+这是一个可分发的 RPOW2 命令行 miner。当前主路径是 CUDA GPU 版，适合 RTX 50 系列等 NVIDIA 显卡；同时保留 CPU native 版和 Node.js fallback。
 
-This is an unofficial tool. Use it only with your own account and follow the service rules of the RPOW2 site.
+## 你应该打包哪些文件
 
-## Features
-
-- Uses the native C miner as the recommended mining engine.
-- Includes the native C miner source and beginner-friendly build instructions.
-- Uses Node.js 18+ only for CLI orchestration, HTTP requests and session handling.
-- Supports magic-link login and local session persistence.
-- Keeps a slower JavaScript miner only as a fallback.
-- Resumes an unfinished challenge from the saved nonce when possible.
-- Logs HTTP retries and mining progress without printing cookies or magic-link query strings.
-- Restricts requests to the known RPOW2 site/API hosts.
-
-## Files
+发布给别人使用时，建议只打包这些文件：
 
 ```text
-rpow-native-miner.c      Native C miner source, buildable with gcc/clang.
-build-native.ps1         Windows helper script for building rpow-native-miner.exe.
-build-native.sh          macOS/Linux helper script for building rpow-native-miner.
-rpow-cli.js              Node.js CLI wrapper for login, API requests and miner orchestration.
-rpow-miner-worker.js     Slower JavaScript fallback miner used only with `--engine node`.
-index.js                 Frontend bundle used for API discovery by `map`.
-README.md                Public usage guide.
-PUBLICATION_GUIDE.md     Maintainer notes for publishing this repo.
+README.md
+INSTALL-OTHER-PC.md
+PUBLICATION_GUIDE.md
+.gitignore
+rpow-cli.js
+pipeline-miner.js
+rpow-miner-worker.js
+rpow-native-miner.c
+rpow-gpu-miner.cu
+build-native.sh
+build-native.ps1
+index.js
 ```
 
-Runtime state is stored in `.rpow-cli-state.json`. It contains account email, cookies/session data, current challenge and last mint metadata. Do not publish it.
+不要打包这些文件：
 
-## Requirements
-
-- Node.js 18 or newer for the CLI wrapper.
-- A native C miner binary built from `rpow-native-miner.c`:
-  - Windows output name: `rpow-native-miner.exe`.
-  - Linux/macOS output name: `rpow-native-miner`.
-- Optional: gcc/clang if you want to rebuild the native C miner yourself.
-
-Check Node.js:
-
-```powershell
-node -v
+```text
+.rpow-cli-state.json
+.rpow-cli-state.*.json
+.env
+*.log
+worker-logs/
+worker-states/
+worker-pids.txt
+node_modules/
+rpow-native-miner
+rpow-native-miner.exe
+rpow-gpu-miner
+rpow-gpu-miner.exe
+batch-test.js
+batch-test.log
+prepare-440-single-workers.py
+start-440-single-workers.py
 ```
 
-## Quick Start
+重点：`.rpow-cli-state.json` 里面有账号邮箱、cookie、session、challenge 状态，绝对不要发给别人。
 
-Open PowerShell in the repository folder:
+## 环境要求
 
-```powershell
-.\build-native.ps1
-node rpow-cli.js map
-node rpow-cli.js login --email you@example.com
-node rpow-cli.js complete-login --link "MAGIC_LINK_FROM_EMAIL"
-node rpow-cli.js mine --count 1 --engine native
+### GPU 推荐环境
+
+- Node.js 18 或更新版本
+- NVIDIA 显卡
+- NVIDIA 驱动可用
+- CUDA Toolkit，必须能运行 `nvcc`
+- Linux/macOS 用 `build-native.sh`，Windows 用 `build-native.ps1`
+
+RTX 5090 默认使用 CUDA 架构：
+
+```text
+sm_120
 ```
 
-On macOS/Linux, build first with:
+如果别人的显卡不是 RTX 50 系列，可以让他按自己的 CUDA 架构设置 `CUDA_ARCH` 后重新编译。
+
+常见参考：
+
+```text
+RTX 40 系列: sm_89
+RTX 30 系列: sm_86
+RTX 20 系列: sm_75
+RTX 50 系列: sm_120
+```
+
+## 第一次使用教程
+
+进入项目目录。
+
+Linux：
 
 ```bash
+cd rpow-cli-miner
+chmod +x build-native.sh
 ./build-native.sh
 ```
 
-For a longer native C mining run:
+Windows PowerShell：
 
 ```powershell
-node rpow-cli.js mine --count 10 --workers 8 --engine native
-```
-
-If the native C miner is unavailable, use the slower JavaScript fallback:
-
-```powershell
-node rpow-cli.js mine --count 1 --workers 8 --engine node
-```
-
-## Native C Setup for Beginners
-
-The CLI itself runs with Node.js, but mining should run through the C binary. Build the C miner once, keep the binary in the same folder as `rpow-cli.js`, then run the CLI with `--engine native`.
-
-### Windows: Build the C Miner
-
-Check that Node.js works:
-
-```powershell
-node -v
-```
-
-Install a C compiler if you do not have one:
-
-1. Install MSYS2 from `https://www.msys2.org/`.
-2. Open "MSYS2 MinGW x64" from the Start menu.
-3. Install gcc:
-
-```bash
-pacman -S --needed mingw-w64-x86_64-gcc
-```
-
-Build from PowerShell if `gcc` is available in PATH:
-
-```powershell
+cd rpow-cli-miner
 .\build-native.ps1
 ```
 
-If PowerShell cannot find `gcc`, build from the MSYS2 MinGW x64 shell instead.
-
-Go to the project folder. Example:
+确认 CLI 可用：
 
 ```bash
-cd /c/Users/YOUR_NAME/Downloads/rpow-native-cli-portable
-```
-
-Build the C miner:
-
-```bash
-gcc -O3 -march=native -pthread rpow-native-miner.c -o rpow-native-miner.exe
-```
-
-Check that the binary exists:
-
-```bash
-ls -l rpow-native-miner.exe
-```
-
-Go back to PowerShell and run:
-
-```powershell
-node rpow-cli.js mine --count 1 --workers 8 --engine native
-```
-
-### Linux/macOS: Build the C Miner
-
-Install a compiler first.
-
-Ubuntu/Debian:
-
-```bash
-sudo apt update
-sudo apt install build-essential nodejs
-```
-
-macOS with Xcode Command Line Tools:
-
-```bash
-xcode-select --install
-```
-
-Build the native C miner:
-
-```bash
-./build-native.sh
-```
-
-Run mining with the C engine:
-
-```bash
-node rpow-cli.js mine --count 1 --workers 8 --engine native
-```
-
-The CLI looks for `rpow-native-miner.exe` on Windows and `rpow-native-miner` on macOS/Linux. If no native binary exists, `--engine native` will fail and tell you to build the native miner.
-
-## Commands
-
-### `map`
-
-Shows the API origin, endpoints found in `index.js`, and the actual pipeline used by the CLI.
-
-```powershell
 node rpow-cli.js map
-```
-
-### `login`
-
-Requests a magic login link through `POST /auth/request`.
-
-```powershell
-node rpow-cli.js login --email you@example.com
-```
-
-If the API returns a rate limit, the command stops instead of repeatedly requesting email links.
-
-### `complete-login`
-
-Accepts the magic link from email, follows it, stores session cookies in the local state file and verifies the session through `GET /me`.
-
-```powershell
-node rpow-cli.js complete-login --link "https://..."
-```
-
-### `me`
-
-Shows the current user, balance and counters. Requires an active session.
-
-```powershell
-node rpow-cli.js me
-```
-
-### `mine`
-
-Runs the mining pipeline: `GET /me`, `POST /challenge`, local native C proof-of-work by default, `POST /mint`.
-
-```powershell
-node rpow-cli.js mine --count 1 --engine native
-```
-
-### `run`
-
-Alias for `mine`, useful for multiple tokens.
-
-```powershell
-node rpow-cli.js run --count 3
-```
-
-### `send`
-
-Sends RPOW to another email through `POST /send`. Requires an active session and balance.
-
-```powershell
-node rpow-cli.js send --to friend@example.com --amount 1
-```
-
-### `activity`
-
-Shows account activity through `GET /activity`.
-
-```powershell
-node rpow-cli.js activity
-```
-
-### `ledger`
-
-Shows public ledger statistics. No session is required.
-
-```powershell
 node rpow-cli.js ledger
 ```
 
-### `logout`
+登录账号：
 
-Calls `POST /auth/logout` and clears local cookies.
-
-```powershell
-node rpow-cli.js logout
+```bash
+node rpow-cli.js login --email you@example.com
+node rpow-cli.js complete-login --link "把邮箱里收到的登录链接放这里"
+node rpow-cli.js me
 ```
 
-## Options
+单次 GPU mint 测试：
 
-### `--state`
-
-Path to the state file. Default: `.rpow-cli-state.json`.
-
-```powershell
-node rpow-cli.js mine --state .my-rpow-state.json
+```bash
+node rpow-cli.js mine --count 1 --engine gpu --workers 16 --device 0
 ```
 
-### `--timeout`
+如果没有 GPU，可以使用 CPU native：
 
-HTTP request timeout in milliseconds. Default: `20000`.
-
-```powershell
-node rpow-cli.js ledger --timeout 10000
+```bash
+node rpow-cli.js mine --count 1 --engine native --workers 8
 ```
 
-### `--retries`
+最慢的 Node.js fallback：
 
-Number of retries for transient failures: timeout, `429`, `408`, `425`, `5xx`. Default: `5`.
-
-```powershell
-node rpow-cli.js mine --retries 8
+```bash
+node rpow-cli.js mine --count 1 --engine node --workers 8
 ```
 
-### `--log-every-ms`
+## 长期运行：GPU 流水线版
 
-How often mining progress is logged and nonce progress is saved. Default: `5000`.
+`pipeline-miner.js` 是当前推荐的长期运行脚本。它会持续并发拿 challenge，GPU 顺序求解，并并发提交 mint，用来减少等待接口造成的空转。
 
-```powershell
-node rpow-cli.js mine --log-every-ms 2000
+基础启动：
+
+```bash
+node pipeline-miner.js --count 1000000 --challenge-concurrency 10 --queue-size 30 --mint-concurrency 10 --workers 16 --device 0
 ```
 
-### `--workers`
+常用参数：
 
-Number of CPU worker threads. By default the CLI uses up to 8 workers while leaving one logical CPU for the system.
-
-```powershell
-node rpow-cli.js mine --workers 8
+```text
+--count                  目标 mint 数量，默认很大
+--challenge-concurrency  并发获取 challenge 数量，默认 10
+--queue-size             challenge 队列上限，默认 30
+--mint-concurrency       并发提交 mint 数量，默认 10
+--workers                GPU miner 的 worker 参数，默认 16
+--device                 GPU 编号，默认 0
+--local-size             CUDA block size，默认 256
+--rounds                 每个 CUDA thread 每批尝试 nonce 数，默认 128
+--log                    日志文件路径，默认 pipeline-miner.log
+--timeout                HTTP 超时，默认 60000 ms
+--min-ttl-ms             challenge 剩余时间低于该值就丢弃，默认 20000 ms
 ```
 
-If the system becomes unresponsive, lower the value:
+RTX 5090 当前建议先用这组参数：
 
-```powershell
-node rpow-cli.js mine --workers 4
+```bash
+node pipeline-miner.js --count 1000000 --challenge-concurrency 10 --queue-size 30 --mint-concurrency 10 --workers 16 --device 0 --local-size 256 --rounds 128
 ```
 
-### `--engine`
+后台运行示例：
 
-Mining engine: `native` or `node`. `native` is the recommended engine. If `rpow-native-miner.exe` is present, the CLI uses `native` by default.
-
-```powershell
-node rpow-cli.js mine --engine native --workers 8
-node rpow-cli.js mine --engine node --workers 8
+```bash
+nohup node pipeline-miner.js --count 1000000 --challenge-concurrency 10 --queue-size 30 --mint-concurrency 10 --workers 16 --device 0 > pipeline-console.log 2>&1 &
 ```
 
-### `--fresh`
+查看日志：
 
-Ignores a saved challenge and requests a fresh one through `POST /challenge`.
-
-```powershell
-node rpow-cli.js mine --fresh
+```bash
+tail -f pipeline-miner.log
 ```
 
-### `--verbose`
+日志里看到下面这种行，说明成功：
 
-Enables detailed HTTP logs.
-
-```powershell
-node rpow-cli.js mine --verbose
+```text
+SUCCESS mint accepted ... minted=...
 ```
 
-Or with an environment variable:
+## 重新编译 GPU miner
 
-```powershell
-$env:RPOW_VERBOSE=1
-node rpow-cli.js mine
-```
-
-Disable colors:
-
-```powershell
-$env:NO_COLOR=1
-node rpow-cli.js mine
-```
-
-## Native C Miner
-
-The repository is intended to be used with the native C miner. Build it from source before using `--engine native`.
-
-Windows:
-
-```powershell
-.\build-native.ps1
-```
-
-Linux/macOS:
+Linux 默认：
 
 ```bash
 ./build-native.sh
 ```
 
-The JavaScript engine exists only as a slower fallback for systems without a compiled miner.
+指定 CUDA 架构：
 
-## Logs and Privacy
-
-Verbose HTTP logs use this shape:
-
-```text
-HTTP -> method/url/attempt/has_body/has_cookie
-HTTP <- method/url/attempt/status/ms/set_cookie/retry_after_ms
+```bash
+CUDA_ARCH=sm_120 ./build-native.sh
+CUDA_ARCH=sm_89 ./build-native.sh
+CUDA_ARCH=sm_86 ./build-native.sh
 ```
 
-Cookies and magic-link query strings are not printed.
-
-Mining progress logs look like this:
-
-```text
-mining hashes=... nonce=... workers=8 engine=native speed="21.00 MH/s"
-```
-
-## Retry and Resume Behavior
-
-The CLI retries transient request failures with exponential backoff and jitter.
-
-`POST /auth/request` is handled conservatively: on rate limit, the CLI stops and asks you to wait instead of spamming email requests.
-
-The state file stores cookies, current challenge, nonce progress and last mint metadata. If mining stops unexpectedly, rerun:
+Windows PowerShell：
 
 ```powershell
-node rpow-cli.js mine --count 1
+$env:CUDA_ARCH="sm_120"
+.\build-native.ps1
 ```
 
-The CLI will resume from the saved nonce if the challenge is still valid.
+如果提示找不到 `nvcc`，说明 CUDA Toolkit 没装好，或者 `nvcc` 不在 PATH。
 
-## API Pipeline
+## 常用命令
 
-The site frontend currently uses:
+查看账号：
+
+```bash
+node rpow-cli.js me
+```
+
+查看 ledger：
+
+```bash
+node rpow-cli.js ledger
+```
+
+查看 activity：
+
+```bash
+node rpow-cli.js activity
+```
+
+退出登录并清空本地 cookie：
+
+```bash
+node rpow-cli.js logout
+```
+
+发送 RPOW：
+
+```bash
+node rpow-cli.js send --to friend@example.com --amount 1
+```
+
+## 打包前检查
+
+打包前确认没有这些文件被放进压缩包：
 
 ```text
-POST /auth/request   { email }
-GET  /me
-POST /challenge
-POST /mint           { challenge_id, solution_nonce }
-POST /send           { recipient_email, amount, idempotency_key }
-GET  /activity
-GET  /ledger
-POST /auth/logout
+.rpow-cli-state.json
+*.log
+worker-logs/
+worker-states/
+node_modules/
 ```
 
-For minting, the CLI requests a challenge, mines `SHA-256(nonce_prefix || uint64-le nonce)` locally, then submits the solution through `POST /mint`.
-
-## Security Notes
-
-The CLI allows requests only to these hosts:
+推荐发布压缩包名：
 
 ```text
-api.rpow2.com
-rpow2.com
-www.rpow2.com
+rpow2-gpu-cli-miner-release.zip
 ```
 
-Before publishing or sharing a build, make sure `.rpow-cli-state.json` is not included.
+如果要给不会编译的人使用，可以额外单独提供对应系统的二进制，例如 `rpow-gpu-miner` 或 `rpow-gpu-miner.exe`。但源码包默认不带二进制，避免系统/CUDA 架构不匹配。

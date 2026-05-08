@@ -3,7 +3,14 @@
 .rpow-cli-state.json.*.tmp
 .env
 *.log
+worker-logs/
+worker-states/
+worker-pids.txt
+node_modules/
+release/
+*.zip
+.DS_Store
 rpow-native-miner
 rpow-native-miner.exe
-node_modules/
-.DS_Store
+rpow-gpu-miner
+rpow-gpu-miner.exe

@@ -1,127 +1,170 @@
-# Installing RPOW CLI on Another PC
+# 给别人电脑安装使用教程
 
-## Included Files
+这个目录是 RPOW2 GPU CLI miner 的可分发版本。对方拿到压缩包后，按下面步骤操作即可。
+
+## 1. 解压
+
+把压缩包解压到一个普通目录，例如：
 
 ```text
-rpow-native-miner.c      Native C miner source, rebuildable for another CPU or operating system.
-build-native.ps1         Windows helper script for building rpow-native-miner.exe.
-build-native.sh          macOS/Linux helper script for building rpow-native-miner.
-rpow-cli.js              Node.js wrapper: login, cookies, API requests, retries, logs and orchestration.
-rpow-miner-worker.js     Slower JavaScript fallback miner.
-README.md                Full command reference and public usage guide.
-index.js                 Frontend bundle used for API discovery.
+C:\Users\你的用户名\Downloads\rpow-cli-miner
 ```
 
-`.rpow-cli-state.json` is intentionally not included in shared builds because it contains cookies and session data.
+或 Linux：
 
-## Requirements
+```text
+/home/你的用户名/rpow-cli-miner
+```
 
-Install Node.js 18 or newer. Node.js runs the CLI wrapper; the actual mining should use the native C miner.
+## 2. 安装 Node.js
 
-```powershell
+需要 Node.js 18 或更新版本。
+
+检查：
+
+```bash
 node -v
 ```
 
-Build the native C miner before mining. This is the recommended mining engine.
+如果没有 Node.js，先安装 Node.js LTS。
 
-Windows output:
+## 3. 安装 GPU 编译环境
+
+### Linux / Ubuntu
+
+安装基础工具和 CUDA Toolkit，确保 `nvcc` 可用：
+
+```bash
+nvcc --version
+nvidia-smi
+```
+
+然后进入项目目录编译：
+
+```bash
+chmod +x build-native.sh
+CUDA_ARCH=sm_120 ./build-native.sh
+```
+
+如果不是 RTX 50 系列，替换 `CUDA_ARCH`：
+
+```text
+RTX 40 系列: sm_89
+RTX 30 系列: sm_86
+RTX 20 系列: sm_75
+RTX 50 系列: sm_120
+```
+
+### Windows
+
+安装：
+
+```text
+Node.js 18+
+NVIDIA Driver
+CUDA Toolkit
+MSYS2 / gcc
+```
+
+确认 PowerShell 里能运行：
 
 ```powershell
+node -v
+nvcc --version
+nvidia-smi
+```
+
+编译：
+
+```powershell
+$env:CUDA_ARCH="sm_120"
 .\build-native.ps1
 ```
 
-macOS/Linux output:
+## 4. 登录账号
 
 ```bash
-./build-native.sh
-```
-
-## Beginner Native C Checklist
-
-On Windows, the easiest path is:
-
-```powershell
-node -v
-```
-
-Then build the native C miner:
-
-1. Install MSYS2 from `https://www.msys2.org/`.
-2. Open "MSYS2 MinGW x64".
-3. Install gcc:
-
-```bash
-pacman -S --needed mingw-w64-x86_64-gcc
-```
-
-4. Go to the project folder:
-
-```bash
-cd /c/Users/YOUR_NAME/Downloads/rpow-native-cli-portable
-```
-
-5. Build the C miner:
-
-```bash
-gcc -O3 -march=native -pthread rpow-native-miner.c -o rpow-native-miner.exe
-```
-
-6. Check that the binary exists:
-
-```bash
-ls -l rpow-native-miner.exe
-```
-
-7. Run the CLI from PowerShell:
-
-```powershell
-node rpow-cli.js mine --count 1 --workers 8 --engine native
-```
-
-On Linux/macOS, build a native binary named `rpow-native-miner`:
-
-```bash
-./build-native.sh
-node rpow-cli.js mine --count 1 --workers 8 --engine native
-```
-
-## First Run
-
-Extract the folder and open PowerShell inside it:
-
-```powershell
-node rpow-cli.js map
 node rpow-cli.js login --email you@example.com
-node rpow-cli.js complete-login --link "MAGIC_LINK_FROM_EMAIL"
-node rpow-cli.js mine --count 10 --workers 8 --engine native
-```
-
-## Without the Native Miner
-
-Use the JavaScript fallback miner only when the native C miner is unavailable. It is slower, but it works without a compiled binary:
-
-```powershell
-node rpow-cli.js mine --count 1 --workers 8 --engine node
-```
-
-## Useful Commands
-
-```powershell
+node rpow-cli.js complete-login --link "邮箱收到的登录链接"
 node rpow-cli.js me
-node rpow-cli.js ledger
-node rpow-cli.js activity
+```
+
+登录后会生成：
+
+```text
+.rpow-cli-state.json
+```
+
+这个文件是个人账号状态，不能分享给别人。
+
+## 5. 先跑一次测试
+
+```bash
+node rpow-cli.js mine --count 1 --engine gpu --workers 16 --device 0
+```
+
+看到 `mint/claim accepted` 就说明可用。
+
+## 6. 长期运行推荐命令
+
+```bash
+node pipeline-miner.js --count 1000000 --challenge-concurrency 10 --queue-size 30 --mint-concurrency 10 --workers 16 --device 0 --local-size 256 --rounds 128
+```
+
+后台运行 Linux 示例：
+
+```bash
+nohup node pipeline-miner.js --count 1000000 --challenge-concurrency 10 --queue-size 30 --mint-concurrency 10 --workers 16 --device 0 > pipeline-console.log 2>&1 &
+```
+
+查看日志：
+
+```bash
+tail -f pipeline-miner.log
+```
+
+## 7. 常见问题
+
+### 找不到 `rpow-gpu-miner`
+
+说明 GPU miner 没编译成功。重新运行：
+
+```bash
+CUDA_ARCH=sm_120 ./build-native.sh
+```
+
+Windows：
+
+```powershell
+$env:CUDA_ARCH="sm_120"
+.\build-native.ps1
+```
+
+### 找不到 `nvcc`
+
+CUDA Toolkit 没装好，或者 PATH 没配置。先修 CUDA 环境。
+
+### 登录失败或未授权
+
+重新登录：
+
+```bash
 node rpow-cli.js logout
+node rpow-cli.js login --email you@example.com
+node rpow-cli.js complete-login --link "新的登录链接"
 ```
 
-Detailed HTTP logs:
+### GPU 算得快但 mint 慢
 
-```powershell
-node rpow-cli.js mine --verbose
-```
+这是接口等待，不是显卡慢。长期运行用 `pipeline-miner.js`，不要只用单次 `rpow-cli.js mine`。
 
-Disable colors:
+## 8. 不要分享的文件
 
-```powershell
-$env:NO_COLOR=1
-node rpow-cli.js mine
+不要把这些发给别人：
+
+```text
+.rpow-cli-state.json
+*.log
+worker-logs/
+worker-states/
 ```
