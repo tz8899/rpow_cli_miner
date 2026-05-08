@@ -2,47 +2,6 @@
 
 这是一个可分发的 RPOW2 命令行 miner。当前主路径是 CUDA GPU 版，适合 RTX 50 系列等 NVIDIA 显卡；同时保留 CPU native 版和 Node.js fallback。
 
-## 你应该打包哪些文件
-
-发布给别人使用时，建议只打包这些文件：
-
-```text
-README.md
-INSTALL-OTHER-PC.md
-PUBLICATION_GUIDE.md
-.gitignore
-rpow-cli.js
-pipeline-miner.js
-rpow-miner-worker.js
-rpow-native-miner.c
-rpow-gpu-miner.cu
-build-native.sh
-build-native.ps1
-index.js
-```
-
-不要打包这些文件：
-
-```text
-.rpow-cli-state.json
-.rpow-cli-state.*.json
-.env
-*.log
-worker-logs/
-worker-states/
-worker-pids.txt
-node_modules/
-rpow-native-miner
-rpow-native-miner.exe
-rpow-gpu-miner
-rpow-gpu-miner.exe
-batch-test.js
-batch-test.log
-prepare-440-single-workers.py
-start-440-single-workers.py
-```
-
-重点：`.rpow-cli-state.json` 里面有账号邮箱、cookie、session、challenge 状态，绝对不要发给别人。
 
 ## 环境要求
 
